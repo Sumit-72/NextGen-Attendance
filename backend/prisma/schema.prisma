@@ -1,0 +1,445 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum UserRole {
+  STUDENT
+  TEACHER
+  ADMIN
+}
+
+enum UserStatus {
+  ACTIVE
+  PENDING
+  SUSPENDED
+  ARCHIVED
+}
+
+enum LocationPermissionStatus {
+  UNKNOWN
+  PROMPT
+  GRANTED
+  DENIED
+  RESTRICTED
+}
+
+enum EnrollmentStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  REMOVED
+}
+
+enum AttendanceSessionMode {
+  OTP
+  QR
+  GEO
+  MANUAL
+}
+
+enum AttendanceSessionStatus {
+  SCHEDULED
+  ACTIVE
+  CLOSED
+  EXPIRED
+  CANCELLED
+}
+
+enum AttendanceStatus {
+  PRESENT
+  ABSENT
+  LATE
+  EXCUSED
+  ON_LEAVE
+  PENDING
+}
+
+enum RequestStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  CANCELLED
+}
+
+enum NotificationChannel {
+  IN_APP
+  EMAIL
+  PUSH
+}
+
+enum NotificationType {
+  ATTENDANCE_STARTED
+  ATTENDANCE_ENDING
+  ATTENDANCE_CLOSED
+  LOW_ATTENDANCE
+  CORRECTION_UPDATED
+  ANNOUNCEMENT
+  ENROLLMENT_REQUEST
+}
+
+model User {
+  id              String       @id @default(cuid())
+  firebaseUid     String       @unique
+  email           String       @unique
+  fullName        String
+  displayName     String?
+  photoUrl        String?
+  mobileNumber    String?
+  locationPermissionStatus LocationPermissionStatus @default(UNKNOWN)
+  role            UserRole
+  status          UserStatus   @default(PENDING)
+  departmentId    String?
+  department      Department?  @relation(fields: [departmentId], references: [id])
+  lastLoginAt     DateTime?
+  profileComplete Boolean      @default(false)
+  createdAt       DateTime     @default(now())
+  updatedAt       DateTime     @updatedAt
+  teacherProfile  Teacher?
+  studentProfile  Student?
+  devices         Device[]
+  notifications   Notification[]
+  auditLogs       AuditLog[]
+  refreshTokens   RefreshToken[]
+
+  @@index([role, status])
+  @@index([departmentId])
+  @@index([status, createdAt])
+}
+
+model Teacher {
+  id         String    @id @default(cuid())
+  userId     String    @unique
+  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  employeeId String    @unique
+  courseId   String?
+  course     Course?   @relation(fields: [courseId], references: [id])
+  classes    Class[]
+  subjects   Subject[] @relation("TeacherSubjects")
+  createdAt  DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+}
+
+model Student {
+  id          String    @id @default(cuid())
+  userId      String    @unique
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  rollNumber  String    @unique
+  semester    Int
+  division    String
+  courseId    String
+  course      Course    @relation(fields: [courseId], references: [id])
+  enrollments Enrollment[]
+  attendance  Attendance[]
+  leaveRequests LeaveRequest[]
+  correctionRequests CorrectionRequest[]
+  createdAt   DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@index([courseId, semester, division])
+}
+
+model Department {
+  id        String    @id @default(cuid())
+  code      String    @unique
+  name      String
+  users     User[]
+  courses   Course[]
+  subjects  Subject[]
+  classes   Class[]
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+}
+
+model Course {
+  id           String      @id @default(cuid())
+  code         String      @unique
+  name         String
+  departmentId String
+  department   Department @relation(fields: [departmentId], references: [id])
+  semesters    Int
+  students     Student[]
+  teachers     Teacher[]
+  subjects     Subject[]
+  classes      Class[]
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+}
+
+model Subject {
+  id           String      @id @default(cuid())
+  code         String      @unique
+  name         String
+  credits      Int         @default(3)
+  departmentId String
+  department   Department @relation(fields: [departmentId], references: [id])
+  courseId     String?
+  course       Course?     @relation(fields: [courseId], references: [id])
+  teachers     Teacher[]   @relation("TeacherSubjects")
+  classes      Class[]
+  createdAt    DateTime    @default(now())
+  updatedAt    DateTime    @updatedAt
+}
+
+model Class {
+  id           String      @id @default(cuid())
+  code         String      @unique
+  name         String
+  semester     Int
+  division     String
+  capacity     Int         @default(120)
+  departmentId String
+  department   Department @relation(fields: [departmentId], references: [id])
+  courseId     String
+  course       Course      @relation(fields: [courseId], references: [id])
+  subjectId    String
+  subject      Subject     @relation(fields: [subjectId], references: [id])
+  teacherId    String
+  teacher      Teacher     @relation(fields: [teacherId], references: [id])
+  enrollments  Enrollment[]
+  sessions     AttendanceSession[]
+  announcements Announcement[]
+  createdAt    DateTime    @default(now())
+  updatedAt    DateTime    @updatedAt
+
+  @@index([teacherId, semester, division])
+  @@index([departmentId, courseId])
+}
+
+model Enrollment {
+  id         String           @id @default(cuid())
+  classId    String
+  class      Class            @relation(fields: [classId], references: [id], onDelete: Cascade)
+  studentId  String
+  student    Student          @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  status     EnrollmentStatus @default(PENDING)
+  requestedAt DateTime        @default(now())
+  reviewedAt DateTime?
+  reviewedBy String?
+
+  @@unique([classId, studentId])
+  @@index([studentId, status])
+  @@index([classId, status])
+}
+
+model AttendanceSession {
+  id              String                  @id @default(cuid())
+  classId         String
+  class           Class                   @relation(fields: [classId], references: [id], onDelete: Cascade)
+  teacherId       String
+  mode            AttendanceSessionMode
+  status          AttendanceSessionStatus @default(ACTIVE)
+  otpHash         String?
+  otpLength       Int?
+  qrTokenHash     String?
+  startsAt        DateTime                @default(now())
+  expiresAt       DateTime
+  closedAt        DateTime?
+  attendanceWindowMinutes Int             @default(10)
+  allowedRadiusMeters     Int             @default(100)
+  minGpsAccuracyMeters    Int             @default(80)
+  centerLatitude  Decimal?                @db.Decimal(10, 7)
+  centerLongitude Decimal?                @db.Decimal(10, 7)
+  createdAt       DateTime                @default(now())
+  updatedAt       DateTime                @updatedAt
+  attendance      Attendance[]
+  logs            AttendanceLog[]
+  otps            OtpChallenge[]
+
+  @@index([classId, status, expiresAt])
+  @@index([teacherId, status])
+  @@index([status, startsAt])
+}
+
+model Attendance {
+  id              String           @id @default(cuid())
+  sessionId       String
+  session         AttendanceSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  studentId       String
+  student         Student          @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  status          AttendanceStatus
+  markedAt        DateTime         @default(now())
+  distanceMeters  Decimal?         @db.Decimal(8, 2)
+  gpsAccuracy     Decimal?         @db.Decimal(8, 2)
+  locationId      String?
+  location        Location?        @relation(fields: [locationId], references: [id])
+  deviceId        String?
+  device          Device?          @relation(fields: [deviceId], references: [id])
+  ipAddress       String?
+  userAgent       String?
+  isLate          Boolean          @default(false)
+  verificationScore Int            @default(100)
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+
+  @@unique([sessionId, studentId])
+  @@index([studentId, markedAt])
+  @@index([sessionId, status])
+}
+
+model AttendanceLog {
+  id          String   @id @default(cuid())
+  sessionId   String
+  session     AttendanceSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  studentId   String?
+  event       String
+  status      String
+  reason      String?
+  metadata    Json?
+  ipAddress   String?
+  userAgent   String?
+  createdAt   DateTime @default(now())
+
+  @@index([sessionId, createdAt])
+  @@index([studentId, createdAt])
+}
+
+model Device {
+  id             String   @id @default(cuid())
+  userId         String
+  user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  fingerprint    String
+  browser        String?
+  os             String?
+  deviceType     String?
+  trusted        Boolean  @default(false)
+  lastIpAddress  String?
+  lastSeenAt     DateTime @default(now())
+  attendance     Attendance[]
+
+  @@unique([userId, fingerprint])
+  @@index([fingerprint])
+}
+
+model Location {
+  id             String   @id @default(cuid())
+  latitude       Decimal  @db.Decimal(10, 7)
+  longitude      Decimal  @db.Decimal(10, 7)
+  accuracyMeters Decimal? @db.Decimal(8, 2)
+  capturedAt     DateTime
+  attendance     Attendance[]
+}
+
+model Announcement {
+  id        String   @id @default(cuid())
+  classId   String?
+  class     Class?   @relation(fields: [classId], references: [id], onDelete: Cascade)
+  title     String
+  body      String
+  urgent    Boolean  @default(false)
+  pinned    Boolean  @default(false)
+  createdBy String
+  createdAt DateTime @default(now())
+  expiresAt DateTime?
+
+  @@index([classId, pinned, createdAt])
+}
+
+model Notification {
+  id        String              @id @default(cuid())
+  userId    String
+  user      User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  type      NotificationType
+  channel   NotificationChannel @default(IN_APP)
+  title     String
+  body      String
+  readAt    DateTime?
+  metadata  Json?
+  createdAt DateTime            @default(now())
+
+  @@index([userId, readAt, createdAt])
+}
+
+model LeaveRequest {
+  id          String        @id @default(cuid())
+  studentId   String
+  student     Student       @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  classId     String?
+  fromDate    DateTime
+  toDate      DateTime
+  reason      String
+  status      RequestStatus @default(PENDING)
+  reviewedBy  String?
+  reviewedAt  DateTime?
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+
+  @@index([studentId, status])
+  @@index([status, createdAt])
+}
+
+model CorrectionRequest {
+  id           String        @id @default(cuid())
+  studentId    String
+  student      Student       @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  attendanceId String?
+  sessionId    String?
+  reason       String
+  status       RequestStatus @default(PENDING)
+  reviewedBy   String?
+  reviewedAt   DateTime?
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+
+  @@index([studentId, status])
+  @@index([status, createdAt])
+}
+
+model OtpChallenge {
+  id          String   @id @default(cuid())
+  sessionId   String
+  session     AttendanceSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  otpHash     String
+  expiresAt   DateTime
+  usedCount   Int      @default(0)
+  createdAt   DateTime @default(now())
+
+  @@index([sessionId, expiresAt])
+}
+
+model RefreshToken {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tokenHash String   @unique
+  expiresAt DateTime
+  revokedAt DateTime?
+  createdAt DateTime @default(now())
+
+  @@index([userId, revokedAt])
+}
+
+model Permission {
+  id          String @id @default(cuid())
+  key         String @unique
+  description String
+  roles       RolePermission[]
+}
+
+model RolePermission {
+  role         UserRole
+  permissionId String
+  permission   Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+
+  @@id([role, permissionId])
+}
+
+model AuditLog {
+  id        String   @id @default(cuid())
+  actorId   String?
+  actor     User?    @relation(fields: [actorId], references: [id])
+  action    String
+  entity    String
+  entityId  String?
+  metadata  Json?
+  ipAddress String?
+  createdAt DateTime @default(now())
+
+  @@index([actorId, createdAt])
+  @@index([entity, entityId])
+  @@index([action, createdAt])
+}
