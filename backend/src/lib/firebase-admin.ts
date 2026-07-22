@@ -17,7 +17,22 @@ export function isFirebaseConfigured() {
 }
 
 function getPrivateKey() {
-  return env.FIREBASE_PRIVATE_KEY?.replace(/\\n/g, "\n");
+  const rawKey = env.FIREBASE_PRIVATE_KEY;
+  if (!rawKey) {
+    return undefined;
+  }
+
+  const key = rawKey.trim().replace(/,$/, "").replace(/^"|"$/g, "").replace(/\\n/g, "\n");
+  if (key.includes("\n")) {
+    return key;
+  }
+
+  const match = key.match(/^-+BEGIN PRIVATE KEY-+\s*(.+?)\s*-+END PRIVATE KEY-+$/);
+  if (!match) {
+    return key;
+  }
+
+  return `-----BEGIN PRIVATE KEY-----\n${match[1].replace(/\s+/g, "")}\n-----END PRIVATE KEY-----`;
 }
 
 function getFirebaseApp() {
@@ -73,5 +88,9 @@ export async function verifyFirebaseIdToken(idToken: string) {
   }
 
   const { getAuth } = await import("firebase-admin/auth");
-  return getAuth(getFirebaseApp()).verifyIdToken(idToken, true) as Promise<DecodedFirebaseToken>;
+  try {
+    return (await getAuth(getFirebaseApp()).verifyIdToken(idToken, true)) as DecodedFirebaseToken;
+  } catch {
+    throw new AuthError("Invalid Firebase identity token");
+  }
 }

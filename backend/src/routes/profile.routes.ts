@@ -8,5 +8,6 @@ import {
 export const profileRouter = Router();
 
 profileRouter.get("/", getProfileController);
+profileRouter.post("/student", upsertStudentProfileController);
 profileRouter.put("/student", upsertStudentProfileController);
 profileRouter.post("/teacher", ensureTeacherProfileController);

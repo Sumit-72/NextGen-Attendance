@@ -1,4 +1,5 @@
 import type { User } from "@prisma/client";
+import { ConflictError, ValidationError } from "../errors";
 import { getPrisma } from "../prisma";
 import { signSession } from "../security";
 import type { Role, SessionUser } from "../types/domain";
@@ -41,32 +42,41 @@ export class AuthService {
     const email = firebaseIdentity.email?.trim().toLowerCase();
 
     if (!email) {
-      throw new Error("Firebase identity token is missing an email claim");
+      throw new ValidationError({}, "Firebase identity token is missing an email claim");
     }
 
-    const user = await this.db.user.upsert({
-      where: { firebaseUid: firebaseIdentity.uid },
-      create: {
-        firebaseUid: firebaseIdentity.uid,
-        email,
-        fullName,
-        displayName: firebaseIdentity.name ?? fullName,
-        photoUrl: firebaseIdentity.picture ?? null,
-        role,
-        status: "ACTIVE",
-        profileComplete: false,
-        lastLoginAt: new Date(),
-      },
-      update: {
-        email,
-        fullName,
-        displayName: firebaseIdentity.name ?? fullName,
-        photoUrl: firebaseIdentity.picture ?? null,
-        role,
-        status: "ACTIVE",
-        lastLoginAt: new Date(),
-      },
-    });
+    const [existingByUid, existingByEmail] = await this.db.$transaction([
+      this.db.user.findUnique({ where: { firebaseUid: firebaseIdentity.uid } }),
+      this.db.user.findUnique({ where: { email } }),
+    ]);
+
+    if (existingByUid && existingByEmail && existingByUid.id !== existingByEmail.id) {
+      throw new ConflictError("This email is already linked to another account");
+    }
+
+    const existingUser = existingByUid ?? existingByEmail;
+    const userData = {
+      firebaseUid: firebaseIdentity.uid,
+      email,
+      fullName,
+      displayName: firebaseIdentity.name ?? fullName,
+      photoUrl: firebaseIdentity.picture ?? null,
+      role: existingUser ? (firebaseIdentity.role ?? existingUser.role) : role,
+      status: "ACTIVE" as const,
+      lastLoginAt: new Date(),
+    };
+
+    const user = existingUser
+      ? await this.db.user.update({
+          where: { id: existingUser.id },
+          data: userData,
+        })
+      : await this.db.user.create({
+          data: {
+            ...userData,
+            profileComplete: false,
+          },
+        });
 
     const sessionUser = toSessionUser(user);
 

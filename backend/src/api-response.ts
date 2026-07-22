@@ -1,6 +1,7 @@
 import type { Response } from "express";
+import { Prisma } from "@prisma/client";
 import { ZodError } from "zod";
-import { AppError, ValidationError } from "./errors";
+import { AppError, BadRequestError, ConflictError, ValidationError } from "./errors";
 
 export type ApiSuccess<T> = { success: true; data: T; meta?: unknown };
 export type ApiFailure = { success: false; error: { code: string; message: string; details?: unknown } };
@@ -14,9 +15,20 @@ export function created<T>(response: Response, data: T, meta?: unknown) {
 }
 
 export function fail(response: Response, error: unknown) {
+  const prismaError =
+    error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002"
+      ? new ConflictError(
+          "A record with this value already exists",
+          Array.isArray(error.meta?.target) ? { fields: error.meta.target.join(", ") } : undefined,
+        )
+      : null;
   const appError =
-    error instanceof ZodError
+    prismaError
+      ? prismaError
+      : error instanceof ZodError
       ? new ValidationError(error.flatten())
+      : error instanceof SyntaxError && typeof error === "object" && error !== null && "body" in error
+        ? new BadRequestError("Malformed JSON request body")
       : error instanceof AppError
         ? error
         : new AppError("Unexpected server error");

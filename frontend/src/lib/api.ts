@@ -22,7 +22,14 @@ type RequestOptions = {
 };
 
 async function parseResponse<T>(response: Response): Promise<T> {
-  const payload = (await response.json()) as ApiSuccess<T> | ApiFailure;
+  const payload = (await response.json().catch(() => ({
+    success: false,
+    error: {
+      code: "INVALID_RESPONSE",
+      message: "The API returned an invalid response.",
+      details: undefined,
+    },
+  }))) as ApiSuccess<T> | ApiFailure;
 
   if (!response.ok || !payload.success) {
     const error = payload.success
